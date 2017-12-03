@@ -23,4 +23,5 @@ executable dice-probability
                        lens,
                        semigroups,
                        ListZipper,
-                       megaparsec
+                       megaparsec,
+                       exact-combinatorics

@@ -1,9 +1,10 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TupleSections #-}
 module Main where
 
 import Data.Set (Set)
-import Control.Monad (mapM, join)
-import Data.List.NonEmpty (NonEmpty((:|)))
+import Control.Monad (mapM, join, forM)
+import Data.List (sort, foldl', group)
 import Data.Monoid ((<>))
 import Data.Char (toLower)
 import qualified Data.List.Zipper as Z
@@ -11,28 +12,46 @@ import qualified Numeric.Probability.Distribution as Prob
 import qualified Text.Megaparsec.String as P
 import qualified Text.Megaparsec as P
 import qualified Text.Megaparsec.Lexer as P
+import qualified Math.Combinatorics.Exact.Binomial as C
+import Debug.Trace
 
 type DieProb = Prob.T Double
 
 data Goal = Scroll | Monster | Skull | SpyingGlass Int
 
-data DieValue = ScrollValue | MonsterValue | SkullValue | SpyingGlassValue Int | JokerValue
+data DieValue = ScrollValue | MonsterValue | SkullValue | SpyingGlassValue !Int | JokerValue deriving (Eq, Ord, Show)
 
 data Outcome = Solved | NotSolved deriving (Eq, Ord)
 
-data DieType = Green | Yellow | Red deriving (Eq, Ord, Enum)
+data DieType = Green | Yellow | Red deriving (Eq, Ord, Enum, Show)
 
-dieValues Green = [ScrollValue, MonsterValue, SkullValue, SpyingGlassValue 1, SpyingGlassValue 2, SpyingGlassValue 3]
-dieValues Yellow = [ScrollValue, SpyingGlassValue 4, SkullValue, SpyingGlassValue 1, SpyingGlassValue 2, SpyingGlassValue 3]
-dieValues Red = [ScrollValue, SpyingGlassValue 4, SkullValue, JokerValue, SpyingGlassValue 2, SpyingGlassValue 3]
+dieValues Green = sort [ScrollValue, MonsterValue, SkullValue, SpyingGlassValue 1, SpyingGlassValue 2, SpyingGlassValue 3]
+dieValues Yellow = sort [ScrollValue, SpyingGlassValue 4, SkullValue, SpyingGlassValue 1, SpyingGlassValue 2, SpyingGlassValue 3]
+dieValues Red = sort [ScrollValue, SpyingGlassValue 4, SkullValue, JokerValue, SpyingGlassValue 2, SpyingGlassValue 3]
 
 type Throw = [(DieType, DieValue)]
 
 type Goals = [Goal]
 
+throwSingleType :: DieType -> Int -> DieProb Throw
+throwSingleType tp totalNumberOfDice = Prob.fromFreqs $ getValuesWithProbability <$> countCombinations (length values) totalNumberOfDice
+  where values = dieValues tp
+        countCombinations 1 numberOfDice = [[numberOfDice]]
+        countCombinations possibleValues numberOfDice = [(numberOfDice - count) : other | count <- [0..numberOfDice], other <- countCombinations (possibleValues - 1) count]
+        getCountProbability (remainingDice, totalProbability) count =
+          (remainingDice - count,
+           (1.0 / (fromIntegral $ length values) ^^ count) * (fromIntegral $ C.choose remainingDice count) * totalProbability)
+        getProbabilityForCounts counts = snd $ foldl' getCountProbability (totalNumberOfDice, 1) counts
+        getValuesForCounts counts = join $ zipWith replicate counts ((tp,) <$> values)
+        getValuesWithProbability counts = (getValuesForCounts counts, getProbabilityForCounts counts)
+
 throw :: [DieType] -> DieProb Throw
-throw dieTypes = mapM throwDie dieTypes
-  where throwDie dieType = (dieType,) <$> Prob.uniform (dieValues dieType)
+throw dieTypes = do
+  let sorted = sort dieTypes
+      grouped = group sorted
+  groupThrows <- forM grouped $ \grp -> do
+    throwSingleType (head grp) (length grp)
+  return $ join groupThrows
 
 trySatisfy :: Throw -> Goals -> Maybe [DieType]
 trySatisfy throw [] = Just []
@@ -112,4 +131,4 @@ main = do
   dice <- getDice
   goals <- getGoals
   let probability = 100 * ((== Solved) Prob.?? satisfy goals dice)
-  putStrLn $ "Success probability: " ++ show probability
+  putStrLn $ "Success probability: " ++ show probability ++ "%"
