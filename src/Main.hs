@@ -4,9 +4,10 @@ module Main where
 
 import Data.Set (Set)
 import Control.Monad (mapM, join, forM)
-import Data.List (sort, foldl', group)
+import Data.List (maximumBy, sort, foldl', group)
 import Data.Monoid ((<>))
 import Data.Char (toLower)
+import Data.Function (on)
 import qualified Data.List.Zipper as Z
 import qualified Numeric.Probability.Distribution as Prob
 import qualified Text.Megaparsec.String as P
@@ -35,6 +36,8 @@ dieValues Red = sort [ScrollValue, SpyingGlassValue 4, SkullValue, JokerValue, S
 type Throw = [(DieType, DieValue)]
 
 type Goals = [Goal]
+
+data Adventure = Adventure { adventureGoals :: Goals, sequential :: Bool }
 
 throwSingleType :: DieType -> Int -> DieProb Throw
 throwSingleType tp totalNumberOfDice = Prob.fromFreqs $ getValuesWithProbability <$> countCombinations (length values) totalNumberOfDice
@@ -89,8 +92,10 @@ satisfy goals dieTypes = Prob.norm $ do
       let groupZipper = Z.fromList $ group sortedDice
           removeElem z = join $ Z.toList $ Z.replace (drop 1 (Z.cursor z)) z
           possibilities = mapZipper removeElem groupZipper
-      outcomes <- mapM (satisfy goals) possibilities
-      return $ or outcomes
+          options = (satisfy goals) <$> possibilities
+      if null options
+        then return False
+        else maximumBy (compare `on` (id Prob.??)) options
 
 multiplier :: P.Parser t -> P.Parser [t]
 multiplier pars = do
