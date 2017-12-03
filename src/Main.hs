@@ -15,13 +15,16 @@ import qualified Text.Megaparsec.Lexer as P
 import qualified Math.Combinatorics.Exact.Binomial as C
 import Debug.Trace
 
+mapZipper :: (Z.Zipper a -> b) -> Z.Zipper a -> [b]
+mapZipper f z = Z.foldrz (\iterator accum -> f iterator : accum) [] z
+
 type DieProb = Prob.T Double
 
 data Goal = Scroll | Monster | Skull | SpyingGlass Int
 
 data DieValue = ScrollValue | MonsterValue | SkullValue | SpyingGlassValue !Int | JokerValue deriving (Eq, Ord, Show)
 
-data Outcome = Solved | NotSolved deriving (Eq, Ord)
+type Outcome = Bool
 
 data DieType = Green | Yellow | Red deriving (Eq, Ord, Enum, Show)
 
@@ -58,11 +61,11 @@ trySatisfy throw [] = Just []
 trySatisfy [] _ = Nothing
 trySatisfy ((dieType, value):remainingThrow) goals = useValue <> skipValue
   where goalZipper = Z.fromList goals
-        tryUse zp accum = case solves value (Z.cursor zp) of
-          DoesNotSolve -> accum
-          Solves -> accum <> ((dieType :) <$> (trySatisfy remainingThrow $ Z.toList $ Z.delete zp))
-          PartiallySolves rest -> accum <> ((dieType :) <$> (trySatisfy remainingThrow $ Z.toList $ Z.replace rest zp))
-        useValue = Z.foldrz tryUse Nothing goalZipper
+        tryUse zp = case solves value (Z.cursor zp) of
+          DoesNotSolve -> Nothing
+          Solves -> ((dieType :) <$> (trySatisfy remainingThrow $ Z.toList $ Z.delete zp))
+          PartiallySolves rest -> ((dieType :) <$> (trySatisfy remainingThrow $ Z.toList $ Z.replace rest zp))
+        useValue = mconcat $ mapZipper tryUse goalZipper
         skipValue = trySatisfy remainingThrow goals
 
 data Solution = Solves | DoesNotSolve | PartiallySolves Goal
@@ -78,10 +81,16 @@ solves _ _ = DoesNotSolve
 
 satisfy :: Goals -> [DieType] -> DieProb Outcome
 satisfy goals dieTypes = Prob.norm $ do
-  thr <- throw dieTypes
-  return $ case trySatisfy thr goals of
-    Nothing -> NotSolved
-    Just _ -> Solved
+  let sortedDice = sort dieTypes
+  thr <- throw sortedDice
+  case trySatisfy thr goals of
+    Just _ -> return True
+    Nothing -> Prob.norm $ do
+      let groupZipper = Z.fromList $ group sortedDice
+          removeElem z = join $ Z.toList $ Z.replace (drop 1 (Z.cursor z)) z
+          possibilities = mapZipper removeElem groupZipper
+      outcomes <- mapM (satisfy goals) possibilities
+      return $ or outcomes
 
 multiplier :: P.Parser t -> P.Parser [t]
 multiplier pars = do
@@ -130,5 +139,5 @@ main :: IO ()
 main = do
   dice <- getDice
   goals <- getGoals
-  let probability = 100 * ((== Solved) Prob.?? satisfy goals dice)
+  let probability = 100 * (id Prob.?? satisfy goals dice)
   putStrLn $ "Success probability: " ++ show probability ++ "%"
